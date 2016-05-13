@@ -1,0 +1,78 @@
+#!/bin/bash
+ECHO=/bin/echo
+EE=/usr/local/bin/ee
+GREP=/bin/grep
+CUT=/usr/bin/cut
+MKDIR=/bin/mkdir
+CAT=/bin/cat
+DATE=/bin/date
+TAR=/bin/tar
+RM=/bin/rm
+LS=/bin/ls
+MV=/bin/mv
+SED=/bin/sed
+MYSQLDUMP=/usr/bin/mysqldump
+MYSQL=/usr/bin/mysql
+
+if [ "$#" -le 1 ];then
+	$ECHO "Usage: $0 <backup/restore> <sitename> [option]"
+elif [ "$1" == "backup" ];then
+	SITENAME=$2
+	BASE_FOLDER=$($EE site info $SITENAME | $GREP Webroot | $CUT -d" " -f2)
+	if [ -z "$BASE_FOLDER" ]; then
+		$ECHO "Website not found"
+	else
+		WPDBHOST=$($CAT $BASE_FOLDER/wp-config.php | $GREP DB_HOST | $CUT -d \' -f 4)
+		WPDBNAME=$($CAT $BASE_FOLDER/wp-config.php | $GREP DB_NAME | $CUT -d \' -f 4)
+		WPDBUSER=$($CAT $BASE_FOLDER/wp-config.php | $GREP DB_USER | $CUT -d \' -f 4)
+		WPDBPASS=$($CAT $BASE_FOLDER/wp-config.php | $GREP DB_PASSWORD | $CUT -d \' -f 4)
+		$ECHO -n "Dumping database... "
+		$MYSQLDUMP --single-transaction -h$WPDBHOST -u$WPDBUSER -p$WPDBPASS $WPDBNAME > $BASE_FOLDER/db-dump.sql
+		$ECHO "[Done]"
+		BACKUP_FILENAME=$($DATE +"clone-$SITENAME-%Y%m%d-%H%M.tar.gz")
+		$ECHO -n "Archiving website folder... "
+		$TAR -czhf $BACKUP_FILENAME -C $BASE_FOLDER htdocs db-dump.sql wp-config.php
+		$ECHO "[Done]"
+		$ECHO -n "Cleaning up... "
+		$RM $BASE_FOLDER/db-dump.sql
+		$ECHO "[Done]"
+	fi
+elif [ "$1" == "restore" ];then
+	SITENAME=$2
+	BASE_FOLDER=$($EE site info $SITENAME | $GREP Webroot | $CUT -d" " -f2)
+	if [ -z "$BASE_FOLDER" ]; then
+		$ECHO "Website not found"
+	else
+		if [ -z "$3" ];then
+			$ECHO "Usage: $0 restore <sitename> <clone_archive>"
+		else
+			BACKUP_FILENAME=$3
+			if [[ ! -r $BACKUP_FILENAME || ! -f $BACKUP_FILENAME ]]; then
+				$ECHO "Invalid clone archive file to restore"
+			else
+				WPDBHOST=$($CAT $BASE_FOLDER/wp-config.php | $GREP DB_HOST | $CUT -d \' -f 4)
+				WPDBNAME=$($CAT $BASE_FOLDER/wp-config.php | $GREP DB_NAME | $CUT -d \' -f 4)
+				WPDBUSER=$($CAT $BASE_FOLDER/wp-config.php | $GREP DB_USER | $CUT -d \' -f 4)
+				WPDBPASS=$($CAT $BASE_FOLDER/wp-config.php | $GREP DB_PASSWORD | $CUT -d \' -f 4)
+				$ECHO -n "Restoring website folder... "
+				$TAR -xzf $BACKUP_FILENAME -C $BASE_FOLDER
+				if [[ -r $BASE_FOLDER/htdocs/wp-config.php || -f $BASE_FOLDER/htdocs/wp-config.php ]]; then
+					$MV $BASE_FOLDER/htdocs/wp-config.php $BASE_FOLDER/wp-config.php
+				fi
+				$SED -i '/DB_HOST/ s/\w\+'\'')/'$WPDBHOST\'')/' "$BASE_FOLDER/wp-config.php"
+				$SED -i '/DB_NAME/ s/\w\+'\'')/'$WPDBNAME\'')/' "$BASE_FOLDER/wp-config.php"
+				$SED -i '/DB_USER/ s/\w\+'\'')/'$WPDBUSER\'')/' "$BASE_FOLDER/wp-config.php"
+				$SED -i '/DB_PASSWORD/ s/\w\+'\'')/'$WPDBPASS\'')/' "$BASE_FOLDER/wp-config.php"
+				$ECHO "[Done]"
+				$ECHO -n "Restoring database... "
+				$MYSQL -h$WPDBHOST -u$WPDBUSER -p$WPDBPASS $WPDBNAME < $BASE_FOLDER/db-dump.sql
+				$ECHO "[Done]"
+				$ECHO -n "Cleaning up... "
+				$RM $BASE_FOLDER/db-dump.sql
+				$ECHO "[Done]"
+			fi
+		fi
+	fi
+else
+	$ECHO "Unknown action"
+fi
