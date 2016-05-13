@@ -12,6 +12,7 @@ LS=/bin/ls
 SED=/bin/sed
 MYSQLDUMP=/usr/bin/mysqldump
 MYSQL=/usr/bin/mysql
+WC=/usr/bin/wc
 
 if [ "$#" -le 1 ];then
 	$ECHO "Usage: $0 <backup/restore> <sitename> [option]"
@@ -21,23 +22,30 @@ elif [ "$1" == "backup" ];then
 	if [ -z "$BASE_FOLDER" ]; then
 		$ECHO "Website not found"
 	else
-		WPDBHOST=$($CAT $BASE_FOLDER/wp-config.php | $GREP DB_HOST | $CUT -d \' -f 4)
-		WPDBNAME=$($CAT $BASE_FOLDER/wp-config.php | $GREP DB_NAME | $CUT -d \' -f 4)
-		WPDBUSER=$($CAT $BASE_FOLDER/wp-config.php | $GREP DB_USER | $CUT -d \' -f 4)
-		WPDBPASS=$($CAT $BASE_FOLDER/wp-config.php | $GREP DB_PASSWORD | $CUT -d \' -f 4)
+		BACKUP_FILENAME=$($DATE +"backup-$SITENAME-%Y%m%d-%H%M.tar.gz")
 		if [ ! -d "$BASE_FOLDER/site-backup" ];then
 			$MKDIR $BASE_FOLDER/site-backup
 		fi
-		$ECHO -n "Dumping database... "
-		$MYSQLDUMP --single-transaction -h$WPDBHOST -u$WPDBUSER -p$WPDBPASS $WPDBNAME > $BASE_FOLDER/$WPDBNAME-dump.sql
-		$ECHO "[Done]"
-		BACKUP_FILENAME=$($DATE +"backup-$SITENAME-%Y%m%d-%H%M.tar.gz")
-		$ECHO -n "Archiving website folder... "
-		$TAR -czf $BASE_FOLDER/site-backup/$BACKUP_FILENAME -C $BASE_FOLDER htdocs $WPDBNAME-dump.sql
-		$ECHO "[Done]"
-		$ECHO -n "Cleaning up... "
-		$RM $BASE_FOLDER/$WPDBNAME-dump.sql
-		$ECHO "[Done]"
+		WPCHECK=$($EE site info $SITENAME | $GREP ^Nginx | $GREP wp | $WC -l)
+                MYSQLCHECK=$($EE site info $SITENAME | $GREP ^Nginx | $GREP mysql | $WC -l)
+                if [[ $WPCHECK -eq 1 ]] || [[ $MYSQLCHECK -eq 1 ]]; then
+                	WPDBNAME=$($EE site info $SITENAME | $GREP DB_NAME | $CUT -d" " -f 2)
+                        WPDBUSER=$($EE site info $SITENAME | $GREP DB_USER | $CUT -d" " -f 2)
+                        WPDBPASS=$($EE site info $SITENAME | $GREP DB_PASS | $CUT -d" " -f 2)
+                        $ECHO -n "Dumping database... "
+			$MYSQLDUMP --single-transaction -u$WPDBUSER -p$WPDBPASS $WPDBNAME > $BASE_FOLDER/$WPDBNAME-dump.sql
+			$ECHO "[Done]"
+			$ECHO -n "Archiving website folder... "
+			$TAR -czf $BASE_FOLDER/site-backup/$BACKUP_FILENAME -C $BASE_FOLDER htdocs $WPDBNAME-dump.sql
+			$ECHO "[Done]"
+			$ECHO -n "Cleaning up... "
+			$RM $BASE_FOLDER/$WPDBNAME-dump.sql
+			$ECHO "[Done]"
+		else
+			$ECHO -n "Archiving website folder... "
+			$TAR -czf $BASE_FOLDER/site-backup/$BACKUP_FILENAME -C $BASE_FOLDER htdocs
+			$ECHO "[Done]"
+		fi
 	fi
 elif [ "$1" == "restore" ];then
 	SITENAME=$2
@@ -57,19 +65,24 @@ elif [ "$1" == "restore" ];then
 			if [[ ! -r $BACKUP_FILENAME || ! -f $BACKUP_FILENAME ]]; then
 				$ECHO "Invalid backup file to restore"
 			else
-				WPDBHOST=$($CAT $BASE_FOLDER/wp-config.php | $GREP DB_HOST | $CUT -d \' -f 4)
-				WPDBNAME=$($CAT $BASE_FOLDER/wp-config.php | $GREP DB_NAME | $CUT -d \' -f 4)
-				WPDBUSER=$($CAT $BASE_FOLDER/wp-config.php | $GREP DB_USER | $CUT -d \' -f 4)
-				WPDBPASS=$($CAT $BASE_FOLDER/wp-config.php | $GREP DB_PASSWORD | $CUT -d \' -f 4)
+				WPCHECK=$($EE site info $SITENAME | $GREP ^Nginx | $GREP wp | $WC -l)
+                		MYSQLCHECK=$($EE site info $SITENAME | $GREP ^Nginx | $GREP mysql | $WC -l)
+				if [[ $WPCHECK -eq 1 ]] || [[ $MYSQLCHECK -eq 1 ]]; then
+	                		WPDBNAME=$($EE site info $SITENAME | $GREP DB_NAME | $CUT -d" " -f 2)
+	                        	WPDBUSER=$($EE site info $SITENAME | $GREP DB_USER | $CUT -d" " -f 2)
+	                        	WPDBPASS=$($EE site info $SITENAME | $GREP DB_PASS | $CUT -d" " -f 2)
+	                        fi
 				$ECHO -n "Restoring website folder... "
 				$TAR -xzf $BACKUP_FILENAME -C $BASE_FOLDER
 				$ECHO "[Done]"
-				$ECHO -n "Restoring database... "
-				$MYSQL -h$WPDBHOST -u$WPDBUSER -p$WPDBPASS $WPDBNAME < $BASE_FOLDER/$WPDBNAME-dump.sql
-				$ECHO "[Done]"
-				$ECHO -n "Cleaning up... "
-				$RM $BASE_FOLDER/$WPDBNAME-dump.sql
-				$ECHO "[Done]"
+				if [[ $WPCHECK -eq 1 ]] || [[ $MYSQLCHECK -eq 1 ]]; then
+					$ECHO -n "Restoring database... "
+					$MYSQL -u$WPDBUSER -p$WPDBPASS $WPDBNAME < $BASE_FOLDER/$WPDBNAME-dump.sql
+					$ECHO "[Done]"
+					$ECHO -n "Cleaning up... "
+					$RM $BASE_FOLDER/$WPDBNAME-dump.sql
+					$ECHO "[Done]"
+				fi
 			fi
 		fi
 	fi
